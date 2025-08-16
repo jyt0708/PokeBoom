@@ -1,0 +1,3 @@
+[submodule "metamon"]
+	path = metamon
+	url = git@github.com:UT-Austin-RPL/metamon.git
