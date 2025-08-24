@@ -10,6 +10,8 @@ from metamon.env import PokeAgentLadder
 from metamon.data import ParsedReplayDataset
 
 import torch
+from dotenv import load_dotenv
+load_dotenv()
 
 # $env:METAMON_CACHE_DIR = "metamon_cache"
 os.environ["METAMON_CACHE_DIR"] = "metamon_cache"
@@ -21,8 +23,8 @@ action_space = DefaultActionSpace()
 
 env = PokeAgentLadder(
     battle_format="gen1ou",
-    player_username="PAC-PokeBoom",
-    player_password="boom12348888poke",
+    player_username=os.getenv("PLAYER_USERNAME"),
+    player_password=os.getenv("PLAYER_PASSWORD"),
     num_battles=2,
     observation_space=obs_space,
     action_space=action_space,
