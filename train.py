@@ -37,9 +37,8 @@ offline_subset = Subset(offline_dset, range(1))
 def custom_collate(batch):
     obs_seqs, action_seqs, reward_seqs, done_seqs = zip(*batch)
     return list(obs_seqs), list(action_seqs), list(reward_seqs), list(done_seqs)
-    
+
 policy = HybridPolicy(
-    "distilbert-base-uncased",
     num_dim=obs_space.gym_space["numbers"].shape[0],
     action_dim=action_space.gym_space.n
 )
@@ -75,11 +74,11 @@ for epoch in range(1):
         actions_masked = actions[mask]
         rewards_masked = rewards[mask]
 
-        print(f"The number of valid samples: {mask.sum()}")
-        print(f"text_batch_masked length: {len(text_batch_masked)}")
-        print(f"num_batch_masked shape: {num_batch_masked.shape}")
-        print(f"actions_masked length: {len(actions_masked)}")
-        print(f"rewards_masked length: {len(rewards_masked)}")
+        # print(f"The number of valid samples: {mask.sum()}")
+        # print(f"text_batch_masked length: {len(text_batch_masked)}")
+        # print(f"num_batch_masked shape: {num_batch_masked.shape}")
+        # print(f"actions_masked length: {len(actions_masked)}")
+        # print(f"rewards_masked length: {len(rewards_masked)}")
 
         # Forward pass
         logits = policy(text_batch_masked, num_batch_masked)
