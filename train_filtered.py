@@ -21,13 +21,51 @@ obs_space = DefaultObservationSpace()
 reward_fn = DefaultShapedReward()
 action_space = DefaultActionSpace()
 
-# pytorch dataset. examples are converted to 
-# the chosen obs/actions/rewards on-the-fly.
-offline_dset = ParsedReplayDataset(
+from torch.utils.data import Dataset
+import numpy as np
+import ast
+import glob
+
+class TxtReplayDataset(Dataset):
+    def __init__(self, folder_path, observation_space, action_space, reward_function):
+        self.files = sorted(glob.glob(os.path.join(folder_path, "round_*.txt")))
+        self.obs_space = observation_space
+        self.action_space = action_space
+        self.reward_fn = reward_function
+
+    def __len__(self):
+        return len(self.files)
+
+    def __getitem__(self, idx):
+        file_path = self.files[idx]
+        with open(file_path, "r", encoding="utf-8") as f:
+            raw_content = f.read()
+
+        # Parse the dict safely
+        data = ast.literal_eval(raw_content)
+
+        # Extract elements
+        obs_seq = {
+            "text": data["Observation sequence"]["text"],
+            "numbers": np.array(data["Observation sequence"]["numbers"])
+        }
+        action_seq = {
+            "chosen": data["Action"]["chosen"],
+            "missing": data["Action"]["missing"],
+            "llm_output": data["Action"]["Output"]
+        }
+        reward_seq = data["Reward"]
+        done_seq = data["Done"]
+
+        return obs_seq, action_seq, reward_seq, done_seq
+
+
+# Replace ParsedReplayDataset with your custom dataset
+offline_dset = TxtReplayDataset(
+    folder_path="offline_with_llm_outputs",   # path to folder with round_xxx.txt
     observation_space=obs_space,
     action_space=action_space,
     reward_function=reward_fn,
-    formats=["gen1ou"],
 )
 
 # Use only the subset for faster testing/training
@@ -89,7 +127,7 @@ for epoch in range(start_epoch, 6):
         obs_seq = obs_seqs[0]
         action_seq = action_seqs[0]
 
-        text_batch = [str(x) for x in obs_seq["text"]]
+        llm_batch = action_seq["llm_output"]
         num_batch = torch.tensor(obs_seq["numbers"], dtype=torch.float32)
         actions = torch.tensor(action_seq['chosen'], dtype=torch.long)
 
@@ -97,12 +135,12 @@ for epoch in range(start_epoch, 6):
         if mask.sum() == 0:
             continue
 
-        text_batch_masked = [text for text, m in zip(text_batch[:-1], mask) if m]
         num_batch_masked = num_batch[:-1][mask]
+        llm_batch_masked = [llm for llm, m in zip(llm_batch[:-1], mask) if m]
         actions_masked = actions[mask]
 
         try:
-            logits = policy(text_batch_masked, num_batch_masked)
+            logits = policy(llm_batch_masked, num_batch_masked)
 
             ce_loss = loss_fn(logits, actions_masked)
             weighted_loss = (ce_loss * 1.0).mean()  # 去掉 reward 权重

@@ -1,13 +1,10 @@
 import torch
 import torch.nn as nn
-from transformers import AutoTokenizer, AutoModel
 import os
 import json
 import requests
-from dotenv import load_dotenv
 from ibm_watson_machine_learning import APIClient
-
-load_dotenv()
+from requests.exceptions import RequestException
 
 class HybridPolicy(nn.Module):
     def __init__(self, num_dim, action_dim=8, hidden_dim=256, action_emb_dim=32):
@@ -36,7 +33,7 @@ class HybridPolicy(nn.Module):
         )
 
         # API Key setup for IBM Watson
-        API_KEY = os.getenv("WML_APIKEY")
+        API_KEY = "ZRoHe-s7mG7_l0I4AvI_RSdVxUsLdLB1GUQDAq5HWMtW"
         # Get IAM token
         token_resp = requests.post(
             "https://iam.cloud.ibm.com/identity/token",
@@ -46,7 +43,7 @@ class HybridPolicy(nn.Module):
                 "apikey": API_KEY,
             },
         )
-        IAM_TOKEN = token_resp.json()["access_token"]
+        IAM_TOKEN = self.get_iam_token()
 
         # IBM Watson config
         self.watson_url = "https://us-south.ml.cloud.ibm.com/ml/v1/deployments/pokemon_action_llm_v01/text/generation_stream?version=2021-05-01"
@@ -67,6 +64,18 @@ class HybridPolicy(nn.Module):
             "use move 3": 6,
             "use move 4": 7,
         }
+    def get_iam_token(self):
+      """Fetch a fresh IAM token from IBM Cloud."""
+      token_resp = requests.post(
+          "https://iam.cloud.ibm.com/identity/token",
+          headers={"Content-Type": "application/x-www-form-urlencoded"},
+          data={
+              "grant_type": "urn:ibm:params:oauth:grant-type:apikey",
+              "apikey": "ZRoHe-s7mG7_l0I4AvI_RSdVxUsLdLB1GUQDAq5HWMtW",
+          },
+      )
+      token_resp.raise_for_status()
+      return token_resp.json()["access_token"]
 
     def call_watson_llm(self, text: str) -> int:
         """Send a single battle state to Watson LLM and return an action id (0–7)."""
@@ -93,24 +102,46 @@ class HybridPolicy(nn.Module):
                     {text}"""
         }
 
-        with requests.post(self.watson_url, headers=self.watson_headers,
-                           json=payload, stream=True) as resp:
-            resp.raise_for_status()
-            output = []
-            for line in resp.iter_lines():
-                if not line:
-                    continue
-                text = line.decode("utf-8")
-                if text.startswith("data: "):
-                    try:
-                        data = json.loads(text[len("data: "):])
-                        results = data.get("results", [])
-                        if results:
-                            output.append(results[0].get("generated_text", "").strip())
-                    except json.JSONDecodeError:
-                        pass
-            action_text = " ".join(output).lower().strip()
-            return self.action_map.get(action_text, 0)  # default: slot 1
+        for attempt in range(3):
+          try:
+              with requests.post(
+                  self.watson_url,
+                  headers=self.watson_headers,
+                  json=payload,
+                  stream=True,
+                  timeout=(5, 60)  # 5s connect, 60s read
+              ) as resp:
+                  if resp.status_code == 401:
+                      print("🔑 Token expired, refreshing...")
+                      self.watson_headers["Authorization"] = f"Bearer {self.get_iam_token()}"
+                      continue  # retry after refresh
+
+                  resp.raise_for_status()
+
+                  output = []
+                  for line in resp.iter_lines():
+                      if not line:
+                          continue
+                      text_line = line.decode("utf-8")
+                      if text_line.startswith("data: "):
+                          try:
+                              data = json.loads(text_line[len("data: "):])
+                              results = data.get("results", [])
+                              if results:
+                                  output.append(
+                                      results[0].get("generated_text", "").strip()
+                                  )
+                          except json.JSONDecodeError:
+                              pass
+
+                  action_text = " ".join(output).lower().strip()
+                  return self.action_map.get(action_text, 0)
+
+          except RequestException as e:
+              print(f"⚠️ Request failed (attempt {attempt+1}): {e}")
+              if attempt == 2:  # after 3 tries
+                  raise
+
 
     def forward(self, text_batch, num_batch):
         """
